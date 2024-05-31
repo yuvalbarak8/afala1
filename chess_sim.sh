@@ -65,7 +65,12 @@ for move in $moves_list; do
     from_row="${move:1:1}"
     to_col="${move:2:1}"
     to_row="${move:3:1}"
+    if [ "${move:4:1}" ]; then
+    piece="${move:4:1}"
+    piece="${piece^^}"
+    else
     piece="${chessboard[$prev_move$from_row$from_col]}"
+    fi
     chessboard[$current_move$to_row$to_col]="$piece"
     chessboard[$current_move$from_row$from_col]="."
     ((current_move++))
