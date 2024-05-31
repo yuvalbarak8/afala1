@@ -1,6 +1,6 @@
 #!/bin/bash
 
-moves_list="e2e4 e7e5 g1f3 b8c6 f1c4 d7d6 e1g1"
+moves_list=$(python3 parse_moves.py "$(cat "$1")")
 moves_number=$(echo $moves_list | wc -w)
 
 declare -A chessboard
