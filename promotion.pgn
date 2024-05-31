@@ -1,0 +1,17 @@
+[Event "?"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "?"]
+[Result "1-0"]
+
+1. e4 1... e5 2. c4 Bc5 3. Nf3 3... h5
+4. Nxe5 4... Nf6 5. d3 Bxf2+ 6. Kxf2 Ng4+ 7. Nxg4
+hxg4 8. Qxg4 8... Qf6+ 9. Bf4 Na6
+10. e5 Qe6 11. Qxg7 Rf8 12. Nc3 d5 13. Nxd5 Rh8 14. Qxh8+ 
+14... Kd7 15. h4 b6 16. h5 Qxd5 17. cxd5 17... Nb8
+18. Qxc8+ Kxc8 19. h6 Nd7 20. h7 b5 21. h8=R+ 
+21... Kb7 22. d4 Nf8 23. Bxb5 Rd8 24. Bc4 Rb8 25. d6 f6 26. exf6 Ra8 27. dxc7
+Ne6 28. Bxe6 a5 29. c8=Q+ Rxc8 30. Rxc8 30... Ka6 31. Rh5 Kb6 32. a3 Kb7 33. b4 axb4 34. axb4 Kb6 35. Rcc5
+Kb7 36. Rc7+ Kb6 37. Rc3 Kb7 38. d5 Kb6 39. d6 Kb7 40. Rc7+ Kb6 41. Be3# 1-0
