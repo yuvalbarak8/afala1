@@ -1,6 +1,12 @@
 #!/bin/bash
+#Find the line number where the second part starts
+line_num=$(grep -n "^[0-9]\." <<< "$(cat "$1")" | head -n 1 | cut -d: -f1)
 
-moves_list=$(python3 parse_moves.py "$(cat "$1")")
+# Split into two parts
+part1=$(head -n +""$((line_num - 1))"" <<< "$(cat "$1")")
+echo "$part1"
+part2=$(tail -n +"$line_num" <<< "$(cat "$1")")
+moves_list=$(python3 parse_moves.py "$part2")
 moves_number=$(echo $moves_list | wc -w)
 
 declare -A chessboard
