@@ -1,151 +1,126 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <dirent.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/wait.h>
-#include <sys/stat.h>
+#include <errno.h>
 
-#define MAX_HISTORY 100
+#define MAX_COMMANDS 100
 #define MAX_COMMAND_LENGTH 100
-#define MAX_PATHS 10
 
-char PATH[256] = ".";  // Start with the current directory
-char history[MAX_HISTORY][MAX_COMMAND_LENGTH];
-char *custom_paths[MAX_PATHS];
-int path_count = 0;
+char *history[MAX_COMMANDS];
+int history_count = 0;
 
-void show_history() {
-    for(int i = 0; i < MAX_HISTORY; i++) {
-        if(strcmp(history[i], "") == 0)
-            break;
-        printf("%s\n", history[i]);
+void add_to_history(char *command) {
+    if (history_count < MAX_COMMANDS) {
+        history[history_count++] = strdup(command);
+    } else {
+        free(history[0]);
+        for (int i = 1; i < MAX_COMMANDS; i++) {
+            history[i - 1] = history[i];
+        }
+        history[MAX_COMMANDS - 1] = strdup(command);
     }
 }
 
-void ls() {
-    struct dirent *de;
-    struct stat st;
-    char fullpath[1024];
-    DIR *dr = opendir(PATH);
+void print_history() {
+    for (int i = 0; i < history_count; i++) {
+        printf("%d %s\n", i + 1, history[i]);
+    }
+}
 
-    if (dr == NULL) {
-        perror("opendir");
+void execute_command(char *command, char *paths[], int path_count) {
+    char *args[MAX_COMMAND_LENGTH / 2 + 1]; // פקודה + מקסימום חצי אורך הארגומנטים
+    char *token = strtok(command, " ");
+    int arg_count = 0;
+
+    while (token != NULL) {
+        args[arg_count++] = token;
+        token = strtok(NULL, " ");
+    }
+    args[arg_count] = NULL;
+
+    if (arg_count == 0) {
         return;
     }
 
-    while ((de = readdir(dr)) != NULL) {
-        if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) {
-            continue;
+    if (strcmp(args[0], "cd") == 0) {
+        if (arg_count < 2) {
+            fprintf(stderr, "cd requires an argument\n");
+        } else if (chdir(args[1]) != 0) {
+            perror("cd failed");
         }
+        return;
+    }
 
-        snprintf(fullpath, sizeof(fullpath), "%s/%s", PATH, de->d_name);
-
-        if (stat(fullpath, &st) == 0) {
-            if (S_ISDIR(st.st_mode) || S_ISREG(st.st_mode)) {
-                printf("%s ", de->d_name);
-            }
+    if (strcmp(args[0], "pwd") == 0) {
+        char cwd[1024];
+        if (getcwd(cwd, sizeof(cwd)) != NULL) {
+            printf("%s\n", cwd);
+        } else {
+            perror("pwd failed");
         }
+        return;
     }
-    printf("\n");
 
-    closedir(dr);
-}
-
-void cd(char *dir_name) {
-    if (chdir(dir_name) == -1) {
-        perror("chdir");
+    if (strcmp(args[0], "history") == 0) {
+        print_history();
+        return;
     }
-}
 
-void pwd() {
-    char cwd[1024];
-    if (getcwd(cwd, sizeof(cwd)) != NULL) {
-        printf("%s\n", cwd);
-    } else {
-        perror("getcwd");
+    if (strcmp(args[0], "exit") == 0) {
+        exit(0);
     }
-}
 
-void execute_command(char *cmd, char **args) {
     pid_t pid = fork();
-    if (pid == -1) {
-        perror("fork");
-        exit(EXIT_FAILURE);
-    } else if (pid == 0) {
-        // Child process
+    if (pid < 0) {
+        perror("fork failed");
+        return;
+    }
+
+    if (pid == 0) {
         for (int i = 0; i < path_count; i++) {
             char path[1024];
-            snprintf(path, sizeof(path), "%s/%s", custom_paths[i], cmd);
+            snprintf(path, sizeof(path), "%s/%s", paths[i], args[0]);
             execv(path, args);
         }
-        // If execv fails, try using system's PATH
-        execvp(cmd, args);
-        perror("execvp");
-        exit(EXIT_FAILURE);
+        execvp(args[0], args);
+        perror("exec failed");
+        exit(1);
     } else {
-        // Parent process
         int status;
         if (waitpid(pid, &status, 0) == -1) {
-            perror("waitpid");
+            perror("wait failed");
         }
     }
 }
 
 int main(int argc, char *argv[]) {
-    // Initialize custom paths
-    for (int i = 1; i < argc && i < MAX_PATHS; i++) {
-        custom_paths[path_count++] = argv[i];
-    }
+    char *paths[argc];
+    int path_count = argc - 1;
 
-    char command[MAX_COMMAND_LENGTH];
-    int command_counter = 0;
+    for (int i = 0; i < path_count; i++) {
+        paths[i] = argv[i + 1];
+    }
 
     while (1) {
         printf("$ ");
         fflush(stdout);
 
+        char command[MAX_COMMAND_LENGTH];
         if (fgets(command, sizeof(command), stdin) == NULL) {
-            break;
-        }
-
-        command[strcspn(command, "\n")] = 0;
-
-        if (command_counter < MAX_HISTORY) {
-            strcpy(history[command_counter], command);
-            command_counter++;
-        }
-
-        char *args[MAX_COMMAND_LENGTH / 2 + 1];
-        int i = 0;
-        char *token = strtok(command, " ");
-        while (token != NULL) {
-            args[i++] = token;
-            token = strtok(NULL, " ");
-        }
-        args[i] = NULL;
-
-        if (args[0] == NULL) {
+            perror("fgets failed");
             continue;
         }
 
-        if (strcmp(args[0], "ls") == 0) {
-            ls();
-        } else if (strcmp(args[0], "history") == 0) {
-            show_history();
-        } else if (strcmp(args[0], "cd") == 0) {
-            if (args[1] == NULL) {
-                printf("cd: missing operand\n");
-            } else {
-                cd(args[1]);
-            }
-        } else if (strcmp(args[0], "pwd") == 0) {
-            pwd();
-        } else if (strcmp(args[0], "exit") == 0) {
-            break;
-        } else {
-            execute_command(args[0], args);
+        // הסרת תו '\n' בסוף הפקודה
+        size_t length = strlen(command);
+        if (command[length - 1] == '\n') {
+            command[length - 1] = '\0';
         }
+
+        add_to_history(command);
+        execute_command(command, paths, path_count);
     }
 
     return 0;
