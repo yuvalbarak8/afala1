@@ -28,7 +28,7 @@ void pwd() {
     if (getcwd(cwd, sizeof(cwd)) != NULL) {
         printf("%s\n", cwd);
     } else {
-        perror("getcwd() error");
+        perror("pwd failed");
     }
 }
 
@@ -65,10 +65,15 @@ int main(int argc, char *argv[]) {
     int command_counter = 0;
 
     while (1) {
+        // Exit after 100 commands
+        if(command_counter == 100)
+        {
+            break;
+        }
         printf("$ ");
         fflush(stdout);
         if (fgets(command, sizeof(command), stdin) == NULL) {
-            break; // handle end of input or error
+            break; 
         }
 
         // Remove trailing newline character
@@ -78,9 +83,8 @@ int main(int argc, char *argv[]) {
         strncpy(history[command_counter], command, sizeof(history[command_counter]) - 1);
         history[command_counter][sizeof(history[command_counter]) - 1] = '\0'; // Ensure null termination
         command_counter++;
-        if (command_counter >= 100) {
-            command_counter = 0; // Wrap around
-        }
+
+        // Check the input
 
         if (strcmp(command, "history") == 0) {
             show_history();
@@ -94,13 +98,13 @@ int main(int argc, char *argv[]) {
         } else {
             // Separate command and arguments
             char *token = strtok(command, " ");
-            char *args[10]; // Assuming a maximum of 10 arguments
+            char *args[10]; 
             int arg_count = 0;
             while (token != NULL && arg_count < 10) {
                 args[arg_count++] = token;
                 token = strtok(NULL, " ");
             }
-            args[arg_count] = NULL; // Null-terminate the arguments array
+            args[arg_count] = NULL; 
 
             // Execute the program
             pid_t pid = fork();
