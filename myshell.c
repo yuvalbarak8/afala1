@@ -5,22 +5,21 @@
 #include <limits.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 char history[100][100];
 char cwd[PATH_MAX];
 
 void show_history() {
-    for (int i = 99; i > -1; i--) {
+    for (int i = 0; i < 100; i++) {
         if (strcmp(history[i], "") == 0)
-            continue;
+            break;
         printf("%s\n", history[i]);
     }
 }
 
 void cd(const char *path) {
-    if (chdir(path) == 0) {
-        printf("Successfully changed directory to %s\n", path);
-    } else {
+    if (chdir(path) != 0) {
         perror("chdir failed");
     }
 }
@@ -88,47 +87,51 @@ int main(int argc, char *argv[]) {
         } else if (strncmp(command, "cd ", 3) == 0) {
             const char *path = command + 3;
             cd(path);
-        }
-        else{
-            // Search for the file named `command` in the current directory and additional paths
-            char result_path[PATH_MAX];
-            int found = 0;
+        } else {
+            // Search for the file named `command` in the directories specified in PATH and additional paths
+char result_path[PATH_MAX];
+int found = 0;
 
-            // First search in the current working directory
-            pwd(); // update `cwd`
-            found = search_file(cwd, command, result_path);
+// If not found, search in the directories specified in PATH
+const char *path_env = getenv("PATH");
+if (path_env != NULL) {
+    char *path = strdup(path_env);
+    char *token = strtok(path, ":");
+    while (token != NULL && !found) {
+        found = search_file(token, command, result_path);
+        token = strtok(NULL, ":");
+    }
+    free(path);
+}
 
-            // If not found, search in the paths provided as command-line arguments
-            for (int i = 1; i < argc && !found; i++) {
-                found = search_file(argv[i], command, result_path);
-            }
+// If not found in PATH, search in the paths provided as command-line arguments
+for (int i = 1; i < argc && !found; i++) {
+    found = search_file(argv[i], command, result_path);
+}
 
-            if (found) {
-                printf("Found %s at %s\n", command, result_path);
-                // You can assign `result_path` to a variable if needed
+if (found) {
 
-                // change from here
-                pid_t pid = fork();
-                if (pid == -1) {
-                    perror("fork failed");
-                } else if (pid == 0) {
-                    // This is the child process
-                    execl(result_path, result_path, "-l", NULL);
-                    // If execl returns, it means an error occurred
-                    perror("execl failed");
-                    exit(EXIT_FAILURE); // Terminate the child process
-                } else {
-                    // This is the parent process
-                    // Wait for the child process to finish
-                    int status;
-                    waitpid(pid, &status, 0);
-                }
-// to here
+    // Execute the found file
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("fork failed");
+    } else if (pid == 0) {
+        // This is the child process
+        execl(result_path, result_path, NULL);
+        // If execl returns, it means an error occurred
+        perror("execl failed");
+        exit(EXIT_FAILURE); // Terminate the child process
+    } else {
+        // This is the parent process
+        // Wait for the child process to finish
+        int status;
+        waitpid(pid, &status, 0);
+    }
+} else {
+    // Print error message if file is not found
+    fprintf(stderr, "exec failed: No such file or directory\n");
+}
 
-
-            } else {
-                printf("%s not found in the specified directories\n", command);
-            }
         }
     }
     return 0;
