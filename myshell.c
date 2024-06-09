@@ -41,6 +41,7 @@ int search_file(const char *dir_path, const char *filename, char *result_path) {
     }
     struct dirent *entry;
     struct stat file_info;
+    int found = 0;
     while ((entry = readdir(dir)) != NULL) {
         char full_path[PATH_MAX];
         snprintf(full_path, PATH_MAX, "%s/%s", dir_path, entry->d_name);
@@ -51,12 +52,12 @@ int search_file(const char *dir_path, const char *filename, char *result_path) {
         }
         if (S_ISREG(file_info.st_mode) && strcmp(entry->d_name, filename) == 0) {
             snprintf(result_path, PATH_MAX, "%s/%s", dir_path, filename);
-            closedir(dir);
-            return 1;
+            found = 1;
+            break;
         }
     }
     closedir(dir);
-    return 0;
+    return found;
 }
 
 int main(int argc, char *argv[]) {
@@ -74,9 +75,12 @@ int main(int argc, char *argv[]) {
         command[strcspn(command, "\n")] = '\0';
 
         // Store command in history
-        strncpy(history[command_counter], command, sizeof(history[command_counter]));
+        strncpy(history[command_counter], command, sizeof(history[command_counter]) - 1);
         history[command_counter][sizeof(history[command_counter]) - 1] = '\0'; // Ensure null termination
         command_counter++;
+        if (command_counter >= 100) {
+            command_counter = 0; // Wrap around
+        }
 
         if (strcmp(command, "history") == 0) {
             show_history();
@@ -88,50 +92,32 @@ int main(int argc, char *argv[]) {
             const char *path = command + 3;
             cd(path);
         } else {
-            // Search for the file named `command` in the directories specified in PATH and additional paths
-char result_path[PATH_MAX];
-int found = 0;
+            // Separate command and arguments
+            char *token = strtok(command, " ");
+            char *args[10]; // Assuming a maximum of 10 arguments
+            int arg_count = 0;
+            while (token != NULL && arg_count < 10) {
+                args[arg_count++] = token;
+                token = strtok(NULL, " ");
+            }
+            args[arg_count] = NULL; // Null-terminate the arguments array
 
-// If not found, search in the directories specified in PATH
-const char *path_env = getenv("PATH");
-if (path_env != NULL) {
-    char *path = strdup(path_env);
-    char *token = strtok(path, ":");
-    while (token != NULL && !found) {
-        found = search_file(token, command, result_path);
-        token = strtok(NULL, ":");
-    }
-    free(path);
-}
-
-// If not found in PATH, search in the paths provided as command-line arguments
-for (int i = 1; i < argc && !found; i++) {
-    found = search_file(argv[i], command, result_path);
-}
-
-if (found) {
-
-    // Execute the found file
-    pid_t pid = fork();
-    if (pid == -1) {
-        perror("fork failed");
-    } else if (pid == 0) {
-        // This is the child process
-        execl(result_path, result_path, NULL);
-        // If execl returns, it means an error occurred
-        perror("execl failed");
-        exit(EXIT_FAILURE); // Terminate the child process
-    } else {
-        // This is the parent process
-        // Wait for the child process to finish
-        int status;
-        waitpid(pid, &status, 0);
-    }
-} else {
-    // Print error message if file is not found
-    fprintf(stderr, "exec failed: No such file or directory\n");
-}
-
+            // Execute the program
+            pid_t pid = fork();
+            if (pid == -1) {
+                perror("fork failed");
+            } else if (pid == 0) {
+                // This is the child process
+                execvp(args[0], args);
+                // If execvp returns, it means an error occurred
+                perror("execvp failed");
+                exit(EXIT_FAILURE); // Terminate the child process
+            } else {
+                // This is the parent process
+                // Wait for the child process to finish
+                int status;
+                waitpid(pid, &status, 0);
+            }
         }
     }
     return 0;
