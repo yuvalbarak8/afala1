@@ -53,10 +53,11 @@ int main(int argc, char *argv[]) {
             }
         }
     } else {
-        // Parent process
-        int status;
         // Wait for both children to complete
-        while (wait(&status) > 0);
+        if (sleep(5) == -1) {
+            perror("Failed of sleep");
+            return 1;
+        }
 
         for (int i = 0; i < count; i++) {
             fprintf(output, "%s\n", argv[1]); 
