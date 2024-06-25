@@ -31,6 +31,8 @@ void copy_file(const char *src, const char *dest, int copy_symlinks, int copy_pe
             perror("symlink failed");
             return;
         }
+
+        printf("Created symlink: %s -> %s\n", dest, link_target);
     } else {
         // Copy regular files or the target of symbolic links when copy_symlinks is not set
         int src_fd = open(src, O_RDONLY);
@@ -69,6 +71,8 @@ void copy_file(const char *src, const char *dest, int copy_symlinks, int copy_pe
                 perror("chmod failed");
             }
         }
+
+        printf("Copied file: %s -> %s\n", src, dest);
     }
 }
 
@@ -95,6 +99,8 @@ void create_directory(const char *path) {
     if (mkdir(tmp, S_IRWXU) == -1 && errno != EEXIST) {
         perror("mkdir failed");
     }
+
+    printf("Created directory: %s\n", path);
 }
 
 void copy_directory(const char *src, const char *dest, int copy_symlinks, int copy_permissions) {
