@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <errno.h>
+#include <limits.h>
 
 void copy_file(const char *src, const char *dest, int copy_symlinks, int copy_permissions) {
     struct stat stat_buf;
@@ -17,6 +18,7 @@ void copy_file(const char *src, const char *dest, int copy_symlinks, int copy_pe
     }
 
     if (S_ISLNK(stat_buf.st_mode) && copy_symlinks) {
+        // Copy symbolic link itself, not the target it points to
         char link_target[PATH_MAX];
         ssize_t len = readlink(src, link_target, sizeof(link_target) - 1);
         if (len == -1) {
@@ -30,6 +32,7 @@ void copy_file(const char *src, const char *dest, int copy_symlinks, int copy_pe
             return;
         }
     } else {
+        // Copy regular files or the target of symbolic links when copy_symlinks is not set
         int src_fd = open(src, O_RDONLY);
         if (src_fd == -1) {
             perror("open failed");
