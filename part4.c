@@ -15,6 +15,7 @@ int main(int argc, char *argv[]) {
     int copy_symlinks = 0;
     int copy_permissions = 0;
 
+    // Handle command-line flags
     while ((opt = getopt(argc, argv, "lp")) != -1) {
         switch (opt) {
             case 'l':
@@ -36,6 +37,12 @@ int main(int argc, char *argv[]) {
 
     const char *src_dir = argv[optind];
     const char *dest_dir = argv[optind + 1];
+
+    // Debug messages to check the flags
+    printf("Source Directory: %s\n", src_dir);
+    printf("Destination Directory: %s\n", dest_dir);
+    printf("Copy Symbolic Links: %s\n", copy_symlinks ? "Yes" : "No");
+    printf("Copy File Permissions: %s\n", copy_permissions ? "Yes" : "No");
 
     copy_directory(src_dir, dest_dir, copy_symlinks, copy_permissions);
 
