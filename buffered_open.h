@@ -13,21 +13,34 @@
 // Structure to hold the buffer and original flags
 typedef struct {
     int fd;                     // File descriptor for the opened file
-    char *read_buffer;          // Buffer for reading operations
-    char *write_buffer;         // Buffer for writing operations
-    size_t read_buffer_size;    // Size of the read buffer
-    size_t write_buffer_size;   // Size of the write buffer
-    size_t read_buffer_pos;     // Current position in the read buffer
-    size_t write_buffer_pos;    // Current position in the write buffer
-    int flags;                  // File flags
-    int preappend;              // Flag to indicate if O_PREAPPEND was used
+
+    char *read_buffer;          // Buffer for reading operations, holds data read from the file
+    char *write_buffer;         // Buffer for writing operations, holds data to be written to the file
+
+    size_t read_buffer_size;    // Size of the read buffer, indicating how much data it can hold
+    size_t write_buffer_size;   // Size of the write buffer, indicating how much data it can hold
+
+    size_t read_buffer_pos;     // Current position in the read buffer, indicating the next byte to be read
+    size_t write_buffer_pos;    // Current position in the write buffer, indicating the next byte to be written
+
+    int flags;                  // File flags used to control file access modes and options (like O_RDONLY, O_WRONLY)
+
+    int preappend;              // Flag to remember if the O_PREAPPEND flag was used, indicating special handling for writes
 } buffered_file_t;
 
-// Function prototypes
+// Function to wrap the original open function
 buffered_file_t *buffered_open(const char *pathname, int flags, ...);
+
+// Function to write to the buffered file
 ssize_t buffered_write(buffered_file_t *bf, const void *buf, size_t count);
+
+// Function to read from the buffered file
 ssize_t buffered_read(buffered_file_t *bf, void *buf, size_t count);
+
+// Function to flush the buffer to the file
 int buffered_flush(buffered_file_t *bf);
+
+// Function to close the buffered file
 int buffered_close(buffered_file_t *bf);
 
 #endif // BUFFERED_OPEN_H
