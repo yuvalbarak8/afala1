@@ -51,47 +51,10 @@ buffered_file_t *buffered_open(const char *pathname, int flags, ...)
 
 ssize_t buffered_write(buffered_file_t *bfile, const void *buf, size_t count) 
 {
-    if (bfile->preappend) {
-        off_t end_offset = lseek(bfile->fd, 0, SEEK_END);
-        char *temp_buf = (char *)malloc(end_offset);
-        if (!temp_buf) {
-            errno = ENOMEM;
-            return -1;
-        }
-
-        lseek(bfile->fd, 0, SEEK_SET);
-        if (read(bfile->fd, temp_buf, end_offset) == -1) {
-            free(temp_buf);
-            return -1;
-        }
-
-        lseek(bfile->fd, 0, SEEK_SET);
-        if (write(bfile->fd, buf, count) == -1) {
-            free(temp_buf);
-            return -1;
-        }
-
-        if (write(bfile->fd, temp_buf, end_offset) == -1) {
-            free(temp_buf);
-            return -1;
-        }
-
-        free(temp_buf);
-        return count;
-    }
-
     const char *input_buf = (const char *)buf;
     size_t bytes_left = count;
 
     while (bytes_left > 0) {
-        if (bfile->write_buffer_pos > 0) {
-            ssize_t written_bytes = write(bfile->fd, bfile->write_buffer, bfile->write_buffer_pos);
-            if (written_bytes == -1) {
-                return -1;
-            }
-            bfile->write_buffer_pos = 0;
-        }
-
         size_t buffer_space = BUFFER_SIZE - bfile->write_buffer_pos;
         size_t write_bytes = (bytes_left < buffer_space) ? bytes_left : buffer_space;
 
@@ -99,6 +62,20 @@ ssize_t buffered_write(buffered_file_t *bfile, const void *buf, size_t count)
         bfile->write_buffer_pos += write_bytes;
         input_buf += write_bytes;
         bytes_left -= write_bytes;
+
+        if (bfile->write_buffer_pos == BUFFER_SIZE) {
+            if (bfile->preappend) {
+                if (buffered_flush(bfile) == -1) {
+                    return -1;
+                }
+            } else {
+                ssize_t written_bytes = write(bfile->fd, bfile->write_buffer, BUFFER_SIZE);
+                if (written_bytes == -1) {
+                    return -1;
+                }
+                bfile->write_buffer_pos = 0;
+            }
+        }
     }
 
     return count;
@@ -106,6 +83,10 @@ ssize_t buffered_write(buffered_file_t *bfile, const void *buf, size_t count)
 
 ssize_t buffered_read(buffered_file_t *bfile, void *buf, size_t count) 
 {
+    if (buffered_flush(bfile) == -1) {
+        return -1;
+    }
+
     char *output_buf = (char *)buf;
     size_t bytes_left = count;
 
@@ -138,9 +119,43 @@ ssize_t buffered_read(buffered_file_t *bfile, void *buf, size_t count)
 int buffered_flush(buffered_file_t *bfile) 
 {
     if (bfile->write_buffer_pos > 0) {
-        ssize_t written_bytes = write(bfile->fd, bfile->write_buffer, bfile->write_buffer_pos);
-        if (written_bytes == -1) {
-            return -1;
+        if (bfile->preappend) {
+            off_t end_offset = lseek(bfile->fd, 0, SEEK_END);
+            if (end_offset == -1) {
+                return -1;
+            }
+            char *temp_buf = (char *)malloc(end_offset);
+            if (!temp_buf) {
+                errno = ENOMEM;
+                return -1;
+            }
+
+            lseek(bfile->fd, 0, SEEK_SET);
+            ssize_t read_bytes = read(bfile->fd, temp_buf, end_offset);
+            if (read_bytes == -1) {
+                free(temp_buf);
+                return -1;
+            }
+
+            lseek(bfile->fd, 0, SEEK_SET);
+            ssize_t written_bytes = write(bfile->fd, bfile->write_buffer, bfile->write_buffer_pos);
+            if (written_bytes == -1) {
+                free(temp_buf);
+                return -1;
+            }
+
+            written_bytes = write(bfile->fd, temp_buf, end_offset);
+            if (written_bytes == -1) {
+                free(temp_buf);
+                return -1;
+            }
+
+            free(temp_buf);
+        } else {
+            ssize_t written_bytes = write(bfile->fd, bfile->write_buffer, bfile->write_buffer_pos);
+            if (written_bytes == -1) {
+                return -1;
+            }
         }
         bfile->write_buffer_pos = 0;
     }
@@ -152,12 +167,8 @@ int buffered_close(buffered_file_t *bfile)
 {
     int close_result = 0;
 
-    if (bfile->write_buffer_pos > 0) {
-        ssize_t written_bytes = write(bfile->fd, bfile->write_buffer, bfile->write_buffer_pos);
-        if (written_bytes == -1) {
-            close_result = -1;
-        }
-        bfile->write_buffer_pos = 0;
+    if (buffered_flush(bfile) == -1) {
+        close_result = -1;
     }
 
     if (close(bfile->fd) == -1) {
