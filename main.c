@@ -173,12 +173,20 @@ void read_config(const char *filename, int *num_producers, ProducerArgs **p_args
         perror("Error opening file");
         exit(EXIT_FAILURE);
     }
+
     fscanf(file, "PRODUCER %d\n", num_producers);
     *p_args = (ProducerArgs *)malloc(*num_producers * sizeof(ProducerArgs));
+
     for (int i = 0; i < *num_producers; i++) {
-        fscanf(file, "%d\nqueue size = %d\n", &((*p_args)[i].num_products), &((*p_args)[i].queue->size));
+        fscanf(file, "PRODUCER %d\n", &((*p_args)[i].id));
+        fscanf(file, "%d\n", &((*p_args)[i].num_products));
+        int queue_size;
+        fscanf(file, "queue size = %d\n", &queue_size);
+        (*p_args)[i].queue = create_bounded_buffer(queue_size);
     }
+
     fscanf(file, "Co-Editor queue size = %d\n", ce_queue_size);
+
     fclose(file);
 }
 
@@ -191,22 +199,17 @@ int main(int argc, char *argv[]) {
     int num_producers;
     ProducerArgs *p_args;
     int ce_queue_size;
+
     read_config(argv[1], &num_producers, &p_args, &ce_queue_size);
 
-    BoundedBuffer *producer_queues = (BoundedBuffer *)malloc(num_producers * sizeof(BoundedBuffer));
-    for (int i = 0; i < num_producers; i++) {
-        producer_queues[i] = *create_bounded_buffer(p_args[i].queue->size);
-        p_args[i].queue = &producer_queues[i];
-    }
-
-    BoundedBuffer dispatcher_queues[NUM_TYPES];
+    BoundedBuffer *dispatcher_queues = (BoundedBuffer *)malloc(NUM_TYPES * sizeof(BoundedBuffer));
     for (int i = 0; i < NUM_TYPES; i++) {
         dispatcher_queues[i] = *create_bounded_buffer(ce_queue_size);
     }
 
     BoundedBuffer *shared_queue = create_bounded_buffer(ce_queue_size);
 
-    DispatcherArgs d_args = {producer_queues, dispatcher_queues, num_producers};
+    DispatcherArgs d_args = {NULL, dispatcher_queues, num_producers};
     CoEditorArgs ce_args[NUM_TYPES] = {
         {&dispatcher_queues[0], shared_queue, "SPORTS"},
         {&dispatcher_queues[1], shared_queue, "NEWS"},
@@ -220,8 +223,11 @@ int main(int argc, char *argv[]) {
     pthread_t screen_manager_thread_id;
 
     for (int i = 0; i < num_producers; i++) {
+        p_args[i].queue = create_bounded_buffer(p_args[i].queue->size);
+        d_args.producer_queues = p_args[i].queue;
         pthread_create(&producer_threads[i], NULL, producer_thread, &p_args[i]);
     }
+
     pthread_create(&dispatcher_thread_id, NULL, dispatcher_thread, &d_args);
     for (int i = 0; i < NUM_TYPES; i++) {
         pthread_create(&co_editor_threads[i], NULL, co_editor_thread, &ce_args[i]);
@@ -238,7 +244,7 @@ int main(int argc, char *argv[]) {
     pthread_join(screen_manager_thread_id, NULL);
 
     for (int i = 0; i < num_producers; i++) {
-        destroy_bounded_buffer(&producer_queues[i]);
+        destroy_bounded_buffer(p_args[i].queue);
     }
     for (int i = 0; i < NUM_TYPES; i++) {
         destroy_bounded_buffer(&dispatcher_queues[i]);
@@ -246,7 +252,7 @@ int main(int argc, char *argv[]) {
     destroy_bounded_buffer(shared_queue);
 
     free(p_args);
-    free(producer_queues);
+    free(dispatcher_queues);
 
     return 0;
 }
