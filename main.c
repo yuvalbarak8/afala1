@@ -25,8 +25,8 @@ typedef struct {
 } ProducerArgs;
 
 typedef struct {
-    BoundedBuffer *producer_queues;
-    BoundedBuffer *dispatcher_queues;
+    BoundedBuffer **producer_queues;
+    BoundedBuffer **dispatcher_queues;
     int num_producers;
 } DispatcherArgs;
 
@@ -68,7 +68,8 @@ BoundedBuffer *create_bounded_buffer(int size) {
 void insert_bounded_buffer(BoundedBuffer *bb, const char *str) {
     sem_wait(&bb->empty);
     pthread_mutex_lock(&bb->mutex);
-    strncpy(bb->buffer[bb->in], str, MAX_STRING_LENGTH);
+    strncpy(bb->buffer[bb->in], str, MAX_STRING_LENGTH - 1);
+    bb->buffer[bb->in][MAX_STRING_LENGTH - 1] = '\0';  // Ensure null termination
     bb->in = (bb->in + 1) % bb->size;
     pthread_mutex_unlock(&bb->mutex);
     sem_post(&bb->full);
@@ -113,27 +114,26 @@ void *dispatcher_thread(void *args) {
     int num_done = 0;
     while (num_done < d_args->num_producers) {
         for (int i = 0; i < d_args->num_producers; i++) {
-            if (sem_trywait(&d_args->producer_queues[i].full) == 0) {
-                char *message = remove_bounded_buffer(&d_args->producer_queues[i]);
+            if (sem_trywait(&d_args->producer_queues[i]->full) == 0) {
+                char *message = remove_bounded_buffer(d_args->producer_queues[i]);
                 if (strcmp(message, "DONE") == 0) {
                     num_done++;
                 } else {
                     char type[MAX_STRING_LENGTH];
                     sscanf(message, "%*s %*d %s %*d", type);
                     if (strcmp(type, "SPORTS") == 0) {
-                        insert_bounded_buffer(&d_args->dispatcher_queues[0], message);
+                        insert_bounded_buffer(d_args->dispatcher_queues[0], message);
                     } else if (strcmp(type, "NEWS") == 0) {
-                        insert_bounded_buffer(&d_args->dispatcher_queues[1], message);
+                        insert_bounded_buffer(d_args->dispatcher_queues[1], message);
                     } else if (strcmp(type, "WEATHER") == 0) {
-                        insert_bounded_buffer(&d_args->dispatcher_queues[2], message);
+                        insert_bounded_buffer(d_args->dispatcher_queues[2], message);
                     }
                 }
-                sem_post(&d_args->producer_queues[i].full);
             }
         }
     }
     for (int i = 0; i < NUM_TYPES; i++) {
-        insert_bounded_buffer(&d_args->dispatcher_queues[i], "DONE");
+        insert_bounded_buffer(d_args->dispatcher_queues[i], "DONE");
     }
     return NULL;
 }
@@ -178,44 +178,41 @@ void read_config(const char *filename, int *num_producers, ProducerArgs **p_args
     *p_args = (ProducerArgs *)malloc(*num_producers * sizeof(ProducerArgs));
 
     for (int i = 0; i < *num_producers; i++) {
-        fscanf(file, "PRODUCER %d\n", &((*p_args)[i].id));
+        int producer_id;
+        fscanf(file, "PRODUCER %d\n", &producer_id);
         fscanf(file, "%d\n", &((*p_args)[i].num_products));
         int queue_size;
         fscanf(file, "queue size = %d\n", &queue_size);
+        (*p_args)[i].id = producer_id;
         (*p_args)[i].queue = create_bounded_buffer(queue_size);
     }
 
     fscanf(file, "Co-Editor queue size = %d\n", ce_queue_size);
-
     fclose(file);
 }
 
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <config file>\n", argv[0]);
-        exit(EXIT_FAILURE);
+        return EXIT_FAILURE;
     }
 
     int num_producers;
     ProducerArgs *p_args;
     int ce_queue_size;
-
     read_config(argv[1], &num_producers, &p_args, &ce_queue_size);
 
-    BoundedBuffer *dispatcher_queues = (BoundedBuffer *)malloc(NUM_TYPES * sizeof(BoundedBuffer));
+    BoundedBuffer **producer_queues = (BoundedBuffer **)malloc(num_producers * sizeof(BoundedBuffer *));
+    for (int i = 0; i < num_producers; i++) {
+        producer_queues[i] = p_args[i].queue;
+    }
+
+    BoundedBuffer **dispatcher_queues = (BoundedBuffer **)malloc(NUM_TYPES * sizeof(BoundedBuffer *));
     for (int i = 0; i < NUM_TYPES; i++) {
-        dispatcher_queues[i] = *create_bounded_buffer(ce_queue_size);
+        dispatcher_queues[i] = create_bounded_buffer(ce_queue_size);
     }
 
     BoundedBuffer *shared_queue = create_bounded_buffer(ce_queue_size);
-
-    DispatcherArgs d_args = {NULL, dispatcher_queues, num_producers};
-    CoEditorArgs ce_args[NUM_TYPES] = {
-        {&dispatcher_queues[0], shared_queue, "SPORTS"},
-        {&dispatcher_queues[1], shared_queue, "NEWS"},
-        {&dispatcher_queues[2], shared_queue, "WEATHER"}
-    };
-    ScreenManagerArgs sm_args = {shared_queue};
 
     pthread_t producer_threads[num_producers];
     pthread_t dispatcher_thread_id;
@@ -223,16 +220,23 @@ int main(int argc, char *argv[]) {
     pthread_t screen_manager_thread_id;
 
     for (int i = 0; i < num_producers; i++) {
-        p_args[i].queue = create_bounded_buffer(p_args[i].queue->size);
-        d_args.producer_queues = p_args[i].queue;
-        pthread_create(&producer_threads[i], NULL, producer_thread, &p_args[i]);
+        pthread_create(&producer_threads[i], NULL, producer_thread, (void *)&p_args[i]);
     }
 
-    pthread_create(&dispatcher_thread_id, NULL, dispatcher_thread, &d_args);
+    DispatcherArgs d_args = {producer_queues, dispatcher_queues, num_producers};
+    pthread_create(&dispatcher_thread_id, NULL, dispatcher_thread, (void *)&d_args);
+
+    CoEditorArgs ce_args[NUM_TYPES];
+    const char *types[NUM_TYPES] = {"SPORTS", "NEWS", "WEATHER"};
     for (int i = 0; i < NUM_TYPES; i++) {
-        pthread_create(&co_editor_threads[i], NULL, co_editor_thread, &ce_args[i]);
+        ce_args[i].dispatcher_queue = dispatcher_queues[i];
+        ce_args[i].shared_queue = shared_queue;
+        ce_args[i].type = types[i];
+        pthread_create(&co_editor_threads[i], NULL, co_editor_thread, (void *)&ce_args[i]);
     }
-    pthread_create(&screen_manager_thread_id, NULL, screen_manager_thread, &sm_args);
+
+    ScreenManagerArgs sm_args = {shared_queue};
+    pthread_create(&screen_manager_thread_id, NULL, screen_manager_thread, (void *)&sm_args);
 
     for (int i = 0; i < num_producers; i++) {
         pthread_join(producer_threads[i], NULL);
@@ -247,7 +251,7 @@ int main(int argc, char *argv[]) {
         destroy_bounded_buffer(p_args[i].queue);
     }
     for (int i = 0; i < NUM_TYPES; i++) {
-        destroy_bounded_buffer(&dispatcher_queues[i]);
+        destroy_bounded_buffer(dispatcher_queues[i]);
     }
     destroy_bounded_buffer(shared_queue);
 
