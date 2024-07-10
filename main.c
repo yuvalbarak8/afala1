@@ -52,39 +52,96 @@ void *screen_manager_thread(void *args);
 
 BoundedBuffer *create_bounded_buffer(int size) {
     BoundedBuffer *bb = (BoundedBuffer *)malloc(sizeof(BoundedBuffer));
+    if (bb == NULL) {
+        perror("Error allocating BoundedBuffer");
+        exit(EXIT_FAILURE);
+    }
+    
     bb->buffer = (char **)malloc(size * sizeof(char *));
+    if (bb->buffer == NULL) {
+        perror("Error allocating buffer in BoundedBuffer");
+        exit(EXIT_FAILURE);
+    }
+    
     for (int i = 0; i < size; i++) {
         bb->buffer[i] = (char *)malloc(MAX_STRING_LENGTH * sizeof(char));
+        if (bb->buffer[i] == NULL) {
+            perror("Error allocating buffer element in BoundedBuffer");
+            exit(EXIT_FAILURE);
+        }
     }
+    
     bb->size = size;
     bb->in = 0;
     bb->out = 0;
-    sem_init(&bb->full, 0, 0);
-    sem_init(&bb->empty, 0, size);
-    pthread_mutex_init(&bb->mutex, NULL);
+    
+    if (sem_init(&bb->full, 0, 0) != 0) {
+        perror("Error initializing full semaphore in BoundedBuffer");
+        exit(EXIT_FAILURE);
+    }
+    
+    if (sem_init(&bb->empty, 0, size) != 0) {
+        perror("Error initializing empty semaphore in BoundedBuffer");
+        exit(EXIT_FAILURE);
+    }
+    
+    if (pthread_mutex_init(&bb->mutex, NULL) != 0) {
+        perror("Error initializing mutex in BoundedBuffer");
+        exit(EXIT_FAILURE);
+    }
+    
     return bb;
 }
 
-// Example of debug prints around mutex operations
 void insert_bounded_buffer(BoundedBuffer *bb, const char *str) {
-    sem_wait(&bb->empty);
-    printf("Thread %ld waiting to lock mutex for insert_bounded_buffer\n", pthread_self()); // Debug print
-    pthread_mutex_lock(&bb->mutex);
-    printf("Thread %ld locked mutex for insert_bounded_buffer\n", pthread_self()); // Debug print
+    if (sem_wait(&bb->empty) != 0) {
+        perror("Error waiting on empty semaphore");
+        exit(EXIT_FAILURE);
+    }
+    
+    if (pthread_mutex_lock(&bb->mutex) != 0) {
+        perror("Error locking mutex");
+        exit(EXIT_FAILURE);
+    }
+    
     strncpy(bb->buffer[bb->in], str, MAX_STRING_LENGTH);
     bb->in = (bb->in + 1) % bb->size;
-    pthread_mutex_unlock(&bb->mutex);
-    printf("Thread %ld unlocked mutex for insert_bounded_buffer\n", pthread_self()); // Debug print
-    sem_post(&bb->full);
+    
+    if (pthread_mutex_unlock(&bb->mutex) != 0) {
+        perror("Error unlocking mutex");
+        exit(EXIT_FAILURE);
+    }
+    
+    if (sem_post(&bb->full) != 0) {
+        perror("Error posting to full semaphore");
+        exit(EXIT_FAILURE);
+    }
 }
 
 char *remove_bounded_buffer(BoundedBuffer *bb) {
-    sem_wait(&bb->full);
-    pthread_mutex_lock(&bb->mutex);
-    char *str = bb->buffer[bb->out];
+    if (sem_wait(&bb->full) != 0) {
+        perror("Error waiting on full semaphore");
+        exit(EXIT_FAILURE);
+    }
+    
+    if (pthread_mutex_lock(&bb->mutex) != 0) {
+        perror("Error locking mutex");
+        exit(EXIT_FAILURE);
+    }
+    
+    char *str = strdup(bb->buffer[bb->out]); // Make a copy of the string to return
     bb->out = (bb->out + 1) % bb->size;
-    pthread_mutex_unlock(&bb->mutex);
-    sem_post(&bb->empty);
+    
+    if (pthread_mutex_unlock(&bb->mutex) != 0) {
+        perror("Error unlocking mutex");
+        exit(EXIT_FAILURE);
+    }
+    
+    if (sem_post(&bb->empty) != 0) {
+        perror("Error posting to empty semaphore");
+        exit(EXIT_FAILURE);
+    }
+    
     return str;
 }
 
@@ -93,9 +150,22 @@ void destroy_bounded_buffer(BoundedBuffer *bb) {
         free(bb->buffer[i]);
     }
     free(bb->buffer);
-    sem_destroy(&bb->full);
-    sem_destroy(&bb->empty);
-    pthread_mutex_destroy(&bb->mutex);
+    
+    if (sem_destroy(&bb->full) != 0) {
+        perror("Error destroying full semaphore");
+        exit(EXIT_FAILURE);
+    }
+    
+    if (sem_destroy(&bb->empty) != 0) {
+        perror("Error destroying empty semaphore");
+        exit(EXIT_FAILURE);
+    }
+    
+    if (pthread_mutex_destroy(&bb->mutex) != 0) {
+        perror("Error destroying mutex");
+        exit(EXIT_FAILURE);
+    }
+    
     free(bb);
 }
 
@@ -107,10 +177,10 @@ void *producer_thread(void *args) {
         char product[MAX_STRING_LENGTH];
         snprintf(product, MAX_STRING_LENGTH, "Producer %d %s %d", p_args->id, types[type_idx], i);
         insert_bounded_buffer(p_args->queue, product);
-        printf("Producer %d produced %s\n", p_args->id, product); // Debug print
+        printf("Producer %d produced %s\n", p_args->id, product);
     }
     insert_bounded_buffer(p_args->queue, "DONE");
-    printf("Producer %d done\n", p_args->id); // Debug print
+    printf("Producer %d done\n", p_args->id);
     return NULL;
 }
 
@@ -135,13 +205,14 @@ void *dispatcher_thread(void *args) {
                     }
                 }
                 sem_post(&d_args->producer_queues[i].full);
-                printf("Dispatcher processed message: %s\n", message); // Debug print
+                printf("Dispatcher processed message: %s\n", message);
+                free(message); // Free the allocated message memory
             }
         }
     }
     for (int i = 0; i < NUM_TYPES; i++) {
         insert_bounded_buffer(&d_args->dispatcher_queues[i], "DONE");
-        printf("Dispatcher sent DONE to co-editor %d\n", i); // Debug print
+        printf("Dispatcher sent DONE to co-editor %d\n", i);
     }
     return NULL;
 }
@@ -152,12 +223,14 @@ void *co_editor_thread(void *args) {
         char *message = remove_bounded_buffer(ce_args->dispatcher_queue);
         if (strcmp(message, "DONE") == 0) {
             insert_bounded_buffer(ce_args->shared_queue, "DONE");
-            printf("Co-editor %s received DONE\n", ce_args->type); // Debug print
+            printf("Co-editor %s received DONE\n", ce_args->type);
+            free(message); // Free the allocated message memory
             break;
         }
         usleep(100000);  // Simulate editing by sleeping for 0.1 seconds
         insert_bounded_buffer(ce_args->shared_queue, message);
-        printf("Co-editor %s edited message: %s\n", ce_args->type, message); // Debug print
+        printf("Co-editor %s edited message: %s\n", ce_args->type, message);
+        free(message); // Free the allocated message memory
     }
     return NULL;
 }
@@ -169,9 +242,11 @@ void *screen_manager_thread(void *args) {
         char *message = remove_bounded_buffer(sm_args->shared_queue);
         if (strcmp(message, "DONE") == 0) {
             num_done++;
-            printf("Screen manager received DONE %d\n", num_done); // Debug print
+            printf("Screen manager received DONE %d\n", num_done);
+            free(message); // Free the allocated message memory
         } else {
             printf("Screen manager displayed: %s\n", message);
+            free(message); // Free the allocated message memory
         }
     }
     printf("Screen manager DONE\n");
@@ -198,6 +273,10 @@ void read_config(const char *filename, int *num_producers, ProducerArgs **p_args
     // Allocate memory for producers
     *num_producers = temp_num_producers;
     *p_args = (ProducerArgs *)malloc(*num_producers * sizeof(ProducerArgs));
+    if (*p_args == NULL) {
+        perror("Error allocating memory for producers");
+        exit(EXIT_FAILURE);
+    }
 
     // Rewind the file to the beginning
     rewind(file);
@@ -220,7 +299,7 @@ void read_config(const char *filename, int *num_producers, ProducerArgs **p_args
                 exit(EXIT_FAILURE);
             }
             (*p_args)[producer_index].queue = create_bounded_buffer(queue_size);
-            printf("Configured Producer %d with queue size %d\n", (*p_args)[producer_index].id, queue_size); // Debug print
+            printf("Configured Producer %d with queue size %d\n", (*p_args)[producer_index].id, queue_size);
             producer_index++;
         }
     }
@@ -230,12 +309,10 @@ void read_config(const char *filename, int *num_producers, ProducerArgs **p_args
         fprintf(stderr, "Error: Could not read Co-Editor queue size\n");
         exit(EXIT_FAILURE);
     }
-    printf("Configured Co-Editor queue size %d\n", *ce_queue_size); // Debug print
+    printf("Configured Co-Editor queue size %d\n", *ce_queue_size);
 
     fclose(file);
 }
-
-
 
 int main(int argc, char *argv[]) {
     if (argc != 2) {
@@ -256,13 +333,18 @@ int main(int argc, char *argv[]) {
     }
 
     BoundedBuffer *dispatcher_queues = (BoundedBuffer *)malloc(NUM_TYPES * sizeof(BoundedBuffer));
+    if (dispatcher_queues == NULL) {
+        perror("Error allocating dispatcher queues");
+        exit(EXIT_FAILURE);
+    }
+    
     for (int i = 0; i < NUM_TYPES; i++) {
         dispatcher_queues[i] = *create_bounded_buffer(ce_queue_size);
-        printf("Created dispatcher queue for type %d with size %d\n", i, ce_queue_size); // Debug print
+        printf("Created dispatcher queue for type %d with size %d\n", i, ce_queue_size);
     }
 
     BoundedBuffer *shared_queue = create_bounded_buffer(ce_queue_size);
-    printf("Created shared queue with size %d\n", ce_queue_size); // Debug print
+    printf("Created shared queue with size %d\n", ce_queue_size);
 
     DispatcherArgs d_args = {NULL, dispatcher_queues, num_producers};
     CoEditorArgs ce_args[NUM_TYPES] = {
@@ -279,40 +361,73 @@ int main(int argc, char *argv[]) {
 
     for (int i = 0; i < num_producers; i++) {
         d_args.producer_queues = p_args[i].queue;
-        pthread_create(&producer_threads[i], NULL, producer_thread, &p_args[i]);
-        printf("Started Producer %d\n", p_args[i].id); // Debug print
+        if (pthread_create(&producer_threads[i], NULL, producer_thread, &p_args[i]) != 0) {
+            perror("Error creating producer thread");
+            exit(EXIT_FAILURE);
+        }
+        printf("Started Producer %d\n", p_args[i].id);
     }
 
-    pthread_create(&dispatcher_thread_id, NULL, dispatcher_thread, &d_args);
-    printf("Started Dispatcher\n"); // Debug print
+    if (pthread_create(&dispatcher_thread_id, NULL, dispatcher_thread, &d_args) != 0) {
+        perror("Error creating dispatcher thread");
+        exit(EXIT_FAILURE);
+    }
+    printf("Started Dispatcher\n");
+
+    for (int i = 0; i < NUM_TYPES; i++) {
+        if (pthread_create(&co_editor_threads[i], NULL, co_editor_thread, &ce_args[i]) != 0) {
+            perror("Error creating co-editor thread");
+            exit(EXIT_FAILURE);
+        }
+        printf("Started Co-Editor %s\n", ce_args[i].type);
+    }
+
+    if (pthread_create(&screen_manager_thread_id, NULL, screen_manager_thread, &sm_args) != 0) {
+        perror("Error creating screen manager thread");
+        exit(EXIT_FAILURE);
+    }
+    printf("Started Screen Manager\n");
+
     for (int i = 0; i < num_producers; i++) {
-    pthread_join(producer_threads[i], NULL);
-    printf("Joined Producer %d\n", p_args[i].id); // Debug print
-}
+        if (pthread_join(producer_threads[i], NULL) != 0) {
+            perror("Error joining producer thread");
+            exit(EXIT_FAILURE);
+        }
+        printf("Joined Producer %d\n", p_args[i].id);
+    }
 
-pthread_join(dispatcher_thread_id, NULL);
-printf("Joined Dispatcher\n"); // Debug print
+    if (pthread_join(dispatcher_thread_id, NULL) != 0) {
+        perror("Error joining dispatcher thread");
+        exit(EXIT_FAILURE);
+    }
+    printf("Joined Dispatcher\n");
 
-for (int i = 0; i < NUM_TYPES; i++) {
-    pthread_join(co_editor_threads[i], NULL);
-    printf("Joined Co-Editor %s\n", ce_args[i].type); // Debug print
-}
+    for (int i = 0; i < NUM_TYPES; i++) {
+        if (pthread_join(co_editor_threads[i], NULL) != 0) {
+            perror("Error joining co-editor thread");
+            exit(EXIT_FAILURE);
+        }
+        printf("Joined Co-Editor %s\n", ce_args[i].type);
+    }
 
-pthread_join(screen_manager_thread_id, NULL);
-printf("Joined Screen Manager\n"); // Debug print
+    if (pthread_join(screen_manager_thread_id, NULL) != 0) {
+        perror("Error joining screen manager thread");
+        exit(EXIT_FAILURE);
+    }
+    printf("Joined Screen Manager\n");
 
-for (int i = 0; i < num_producers; i++) {
-    destroy_bounded_buffer(p_args[i].queue);
-}
+    for (int i = 0; i < num_producers; i++) {
+        destroy_bounded_buffer(p_args[i].queue);
+    }
 
-for (int i = 0; i < NUM_TYPES; i++) {
-    destroy_bounded_buffer(&dispatcher_queues[i]);
-}
+    for (int i = 0; i < NUM_TYPES; i++) {
+        destroy_bounded_buffer(&dispatcher_queues[i]);
+    }
 
-destroy_bounded_buffer(shared_queue);
+    destroy_bounded_buffer(shared_queue);
 
-free(p_args);
-free(dispatcher_queues);
+    free(p_args);
+    free(dispatcher_queues);
 
-return 0;
+    return 0;
 }
