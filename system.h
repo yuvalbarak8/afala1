@@ -9,7 +9,6 @@
 #include <string>
 #include <random>
 #include <iostream>
-#include <optional>
 
 class BoundedBuffer {
 public:
@@ -22,20 +21,20 @@ public:
         cond.notify_all();
     }
 
-    std::optional<std::string> tryRemove() {
+    bool tryRemove(std::string& item) {
         std::unique_lock<std::mutex> lock(mutex, std::defer_lock);
         if (!lock.try_lock()) {
-            return std::nullopt;
+            return false;
         }
 
         if (buffer.empty()) {
-            return std::nullopt;
+            return false;
         }
 
-        std::string item = buffer.front();
+        item = buffer.front();
         buffer.pop();
         cond.notify_all();
-        return item;
+        return true;
     }
 
 private:
@@ -86,10 +85,8 @@ public:
         size_t index = 0;
 
         while (doneCount < totalProducers) {
-            std::optional<std::string> messageOpt = producerQueues[index]->tryRemove();
-
-            if (messageOpt) {
-                std::string message = *messageOpt;
+            std::string message;
+            if (producerQueues[index]->tryRemove(message)) {
                 if (message == "DONE") {
                     ++doneCount;
                 } else {
@@ -127,12 +124,12 @@ public:
 
     void operator()() {
         while (true) {
-            std::string message = inputQueue.tryRemove().value_or("");
-            if (message == "DONE") {
-                outputQueue.insert("DONE");
-                break;
-            }
-            if (!message.empty()) {
+            std::string message;
+            if (inputQueue.tryRemove(message)) {
+                if (message == "DONE") {
+                    outputQueue.insert("DONE");
+                    break;
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 outputQueue.insert(message);
             }
@@ -150,11 +147,13 @@ public:
 
     void operator()() {
         while (doneCount < 3) {
-            std::string message = queue.tryRemove().value_or("");
-            if (message == "DONE") {
-                ++doneCount;
-            } else if (!message.empty()) {
-                std::cout << message << std::endl;
+            std::string message;
+            if (queue.tryRemove(message)) {
+                if (message == "DONE") {
+                    ++doneCount;
+                } else {
+                    std::cout << message << std::endl;
+                }
             }
         }
         std::cout << "DONE" << std::endl;
