@@ -9,6 +9,7 @@
 #include <string>
 #include <random>
 #include <iostream>
+#include <optional>
 
 class BoundedBuffer {
 public:
@@ -21,9 +22,16 @@ public:
         cond.notify_all();
     }
 
-    std::string remove() {
-        std::unique_lock<std::mutex> lock(mutex);
-        cond.wait(lock, [this] { return !buffer.empty(); });
+    std::optional<std::string> tryRemove() {
+        std::unique_lock<std::mutex> lock(mutex, std::defer_lock);
+        if (!lock.try_lock()) {
+            return std::nullopt;
+        }
+
+        if (buffer.empty()) {
+            return std::nullopt;
+        }
+
         std::string item = buffer.front();
         buffer.pop();
         cond.notify_all();
@@ -71,28 +79,31 @@ public:
           sportsQueue(sportsQueue),
           newsQueue(newsQueue),
           weatherQueue(weatherQueue),
-          doneCount(0) {}
+          doneCount(0),
+          totalProducers(producerQueues.size()) {}
 
     void operator()() {
-        size_t numProducers = producerQueues.size();
         size_t index = 0;
 
-        while (doneCount < numProducers) {
-            std::string message = producerQueues[index]->remove();
+        while (doneCount < totalProducers) {
+            std::optional<std::string> messageOpt = producerQueues[index]->tryRemove();
 
-            if (message == "DONE") {
-                ++doneCount;
-            } else {
-                if (message.find("SPORTS") != std::string::npos) {
-                    sportsQueue.insert(message);
-                } else if (message.find("NEWS") != std::string::npos) {
-                    newsQueue.insert(message);
-                } else if (message.find("WEATHER") != std::string::npos) {
-                    weatherQueue.insert(message);
+            if (messageOpt) {
+                std::string message = *messageOpt;
+                if (message == "DONE") {
+                    ++doneCount;
+                } else {
+                    if (message.find("SPORTS") != std::string::npos) {
+                        sportsQueue.insert(message);
+                    } else if (message.find("NEWS") != std::string::npos) {
+                        newsQueue.insert(message);
+                    } else if (message.find("WEATHER") != std::string::npos) {
+                        weatherQueue.insert(message);
+                    }
                 }
             }
 
-            index = (index + 1) % numProducers;
+            index = (index + 1) % totalProducers;
         }
 
         sportsQueue.insert("DONE");
@@ -106,6 +117,7 @@ private:
     BoundedBuffer& newsQueue;
     BoundedBuffer& weatherQueue;
     size_t doneCount;
+    size_t totalProducers;
 };
 
 class CoEditor {
@@ -115,13 +127,15 @@ public:
 
     void operator()() {
         while (true) {
-            std::string message = inputQueue.remove();
+            std::string message = inputQueue.tryRemove().value_or("");
             if (message == "DONE") {
                 outputQueue.insert("DONE");
                 break;
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            outputQueue.insert(message);
+            if (!message.empty()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                outputQueue.insert(message);
+            }
         }
     }
 
@@ -136,10 +150,10 @@ public:
 
     void operator()() {
         while (doneCount < 3) {
-            std::string message = queue.remove();
+            std::string message = queue.tryRemove().value_or("");
             if (message == "DONE") {
                 ++doneCount;
-            } else {
+            } else if (!message.empty()) {
                 std::cout << message << std::endl;
             }
         }
