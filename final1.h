@@ -1,0 +1,183 @@
+#ifndef CONCURRENTSYSTEM_H
+#define CONCURRENTSYSTEM_H
+
+#include <queue>
+#include <mutex>
+#include <condition_variable>
+#include <thread>
+#include <vector>
+#include <string>
+#include <random>
+#include <iostream>
+
+class BoundedBuffer {
+public:
+    BoundedBuffer(int size) : maxSize(size) {}
+
+    void insert(const std::string& item) {
+        std::unique_lock<std::mutex> lock(mutex);
+        cond.wait(lock, [this] { return buffer.size() < maxSize; });
+        buffer.push(item);
+        cond.notify_all();
+    }
+
+    std::string remove() {
+        std::unique_lock<std::mutex> lock(mutex);
+        cond.wait(lock, [this] { return !buffer.empty(); });
+        std::string item = buffer.front();
+        buffer.pop();
+        cond.notify_all();
+        return item;
+    }
+
+    // Try to remove an item without blocking
+    bool tryRemove(std::string& item) {
+        std::unique_lock<std::mutex> lock(mutex);
+        if (buffer.empty()) {
+            return false;
+        }
+        item = buffer.front();
+        buffer.pop();
+        cond.notify_all();
+        return true;
+    }
+
+private:
+    std::queue<std::string> buffer;
+    int maxSize;
+    std::mutex mutex;
+    std::condition_variable cond;
+};
+
+class Producer {
+public:
+    Producer(int id, int numProducts, BoundedBuffer& queue)
+        : id(id), numProducts(numProducts), queue(queue) {}
+
+    void operator()() {
+        std::vector<std::string> types = { "SPORTS", "NEWS", "WEATHER" };
+        std::default_random_engine generator;
+        std::uniform_int_distribution<int> distribution(0, 2);
+
+        for (int i = 0; i < numProducts; ++i) {
+            int typeIndex = distribution(generator);
+            std::string type = types[typeIndex];
+            std::string product;
+
+            if (type == "SPORTS") {
+                product = "Producer " + std::to_string(id) + " " + type + " " + std::to_string(categoryCounter.sportsCount++);
+            } else if (type == "NEWS") {
+                product = "Producer " + std::to_string(id) + " " + type + " " + std::to_string(categoryCounter.newsCount++);
+            } else if (type == "WEATHER") {
+                product = "Producer " + std::to_string(id) + " " + type + " " + std::to_string(categoryCounter.weatherCount++);
+            }
+
+            queue.insert(product);
+        }
+        queue.insert("DONE");
+    }
+
+private:
+    struct CategoryCounter {
+        int sportsCount = 0;
+        int newsCount = 0;
+        int weatherCount = 0;
+    } categoryCounter;
+
+    int id;
+    int numProducts;
+    BoundedBuffer& queue;
+};
+
+class Dispatcher {
+public:
+    Dispatcher(std::vector<BoundedBuffer*>& producerQueues,
+               BoundedBuffer& sportsQueue,
+               BoundedBuffer& newsQueue,
+               BoundedBuffer& weatherQueue)
+        : producerQueues(producerQueues),
+          sportsQueue(sportsQueue),
+          newsQueue(newsQueue),
+          weatherQueue(weatherQueue),
+          doneCount(0) {}
+
+    void operator()() {
+        size_t numProducers = producerQueues.size();
+        size_t index = 0;
+
+        while (doneCount < numProducers) {
+            std::string message;
+            if (producerQueues[index]->tryRemove(message)) {
+                if (message == "DONE") {
+                    ++doneCount;
+                } else {
+                    if (message.find("SPORTS") != std::string::npos) {
+                        sportsQueue.insert(message);
+                    } else if (message.find("NEWS") != std::string::npos) {
+                        newsQueue.insert(message);
+                    } else if (message.find("WEATHER") != std::string::npos) {
+                        weatherQueue.insert(message);
+                    }
+                }
+            }
+            index = (index + 1) % numProducers;
+        }
+
+        // Insert "DONE" into all output queues to signal completion
+        sportsQueue.insert("DONE");
+        newsQueue.insert("DONE");
+        weatherQueue.insert("DONE");
+    }
+
+private:
+    std::vector<BoundedBuffer*>& producerQueues;
+    BoundedBuffer& sportsQueue;
+    BoundedBuffer& newsQueue;
+    BoundedBuffer& weatherQueue;
+    size_t doneCount;
+};
+
+class CoEditor {
+public:
+    CoEditor(BoundedBuffer& inputQueue, BoundedBuffer& outputQueue)
+        : inputQueue(inputQueue), outputQueue(outputQueue) {}
+
+    void operator()() {
+        while (true) {
+            std::string message = inputQueue.remove();
+            if (message == "DONE") {
+                outputQueue.insert("DONE");
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            outputQueue.insert(message);
+        }
+    }
+
+private:
+    BoundedBuffer& inputQueue;
+    BoundedBuffer& outputQueue;
+};
+
+class ScreenManager {
+public:
+    ScreenManager(BoundedBuffer& queue) : queue(queue), doneCount(0) {}
+
+    void operator()() {
+        while (doneCount < 3) {
+            std::string message = queue.remove();
+            if (message == "DONE") {
+                ++doneCount;
+            } else {
+                std::cout << message << std::endl;
+            }
+        }
+        std::cout << "DONE" << std::endl;
+    }
+
+private:
+    BoundedBuffer& queue;
+    size_t doneCount;
+};
+
+#endif // CONCURRENTSYSTEM_H
