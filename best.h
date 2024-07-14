@@ -30,6 +30,18 @@ public:
         return item;
     }
 
+    // Try to remove an item without blocking
+    bool tryRemove(std::string& item) {
+        std::unique_lock<std::mutex> lock(mutex);
+        if (buffer.empty()) {
+            return false;
+        }
+        item = buffer.front();
+        buffer.pop();
+        cond.notify_all();
+        return true;
+    }
+
 private:
     std::queue<std::string> buffer;
     int maxSize;
@@ -48,14 +60,30 @@ public:
         std::uniform_int_distribution<int> distribution(0, 2);
 
         for (int i = 0; i < numProducts; ++i) {
-            std::string type = types[distribution(generator)];
-            std::string product = "Producer " + std::to_string(id) + " " + type + " " + std::to_string(i);
+            int typeIndex = distribution(generator);
+            std::string type = types[typeIndex];
+            std::string product;
+
+            if (type == "SPORTS") {
+                product = "Producer " + std::to_string(id) + " " + type + " " + std::to_string(categoryCounter.sportsCount++);
+            } else if (type == "NEWS") {
+                product = "Producer " + std::to_string(id) + " " + type + " " + std::to_string(categoryCounter.newsCount++);
+            } else if (type == "WEATHER") {
+                product = "Producer " + std::to_string(id) + " " + type + " " + std::to_string(categoryCounter.weatherCount++);
+            }
+
             queue.insert(product);
         }
         queue.insert("DONE");
     }
 
 private:
+    struct CategoryCounter {
+        int sportsCount = 0;
+        int newsCount = 0;
+        int weatherCount = 0;
+    } categoryCounter;
+
     int id;
     int numProducts;
     BoundedBuffer& queue;
@@ -78,23 +106,24 @@ public:
         size_t index = 0;
 
         while (doneCount < numProducers) {
-            std::string message = producerQueues[index]->remove();
-
-            if (message == "DONE") {
-                ++doneCount;
-            } else {
-                if (message.find("SPORTS") != std::string::npos) {
-                    sportsQueue.insert(message);
-                } else if (message.find("NEWS") != std::string::npos) {
-                    newsQueue.insert(message);
-                } else if (message.find("WEATHER") != std::string::npos) {
-                    weatherQueue.insert(message);
+            std::string message;
+            if (producerQueues[index]->tryRemove(message)) {
+                if (message == "DONE") {
+                    ++doneCount;
+                } else {
+                    if (message.find("SPORTS") != std::string::npos) {
+                        sportsQueue.insert(message);
+                    } else if (message.find("NEWS") != std::string::npos) {
+                        newsQueue.insert(message);
+                    } else if (message.find("WEATHER") != std::string::npos) {
+                        weatherQueue.insert(message);
+                    }
                 }
             }
-
             index = (index + 1) % numProducers;
         }
 
+        // Insert "DONE" into all output queues to signal completion
         sportsQueue.insert("DONE");
         newsQueue.insert("DONE");
         weatherQueue.insert("DONE");
