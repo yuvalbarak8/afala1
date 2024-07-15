@@ -10,20 +10,24 @@
 #include <random>
 #include <iostream>
 
-class BoundedBuffer 
+class BoundedBuffer
 {
 public:
-    BoundedBuffer(int amount) : maxAmount(amount) {}
+    using size_type = std::queue<std::string>::size_type;
+
+    BoundedBuffer(size_type amount) : maxAmount(amount) {}
+
     // Insert new item to the buffer, if the buffer is full - wait when it will be place
-    void insert(const std::string& item) 
+    void insert(const std::string& item)
     {
         std::unique_lock<std::mutex> lock(mutex);
         cond_var.wait(lock, [this] { return buffer.size() < maxAmount; });
         buffer.push(item);
         cond_var.notify_all();
     }
+
     // Remove item from the buffer and return it, if the buffer is empty, wait for item
-    std::string remove() 
+    std::string remove()
     {
         std::unique_lock<std::mutex> lock(mutex);
         cond_var.wait(lock, [this] { return !buffer.empty(); });
@@ -32,11 +36,12 @@ public:
         cond_var.notify_all();
         return item;
     }
+
     // Check if we can remove from the buffer (not empty)
-    bool tryRemove(std::string& item) 
+    bool tryRemove(std::string& item)
     {
         std::unique_lock<std::mutex> lock(mutex);
-        if (buffer.empty()) 
+        if (buffer.empty())
         {
             return false;
         }
@@ -48,38 +53,38 @@ public:
 
 private:
     std::queue<std::string> buffer;
-    int maxAmount;
+    size_type maxAmount;
     std::mutex mutex;
     std::condition_variable cond_var;
 };
 
-class Producer 
+class Producer
 {
 public:
     Producer(int id, int numProducts, BoundedBuffer& queue)
         : id(id), numProducts(numProducts), queue(queue) {}
 
-    void operator()() 
+    void operator()()
     {
         std::vector<std::string> categories = { "SPORTS", "NEWS", "WEATHER" };
         std::default_random_engine rander;
         std::uniform_int_distribution<int> numbers(0, 2);
 
-        for (int i = 0; i < numProducts; ++i) 
+        for (int i = 0; i < numProducts; ++i)
         {
             std::string category = categories[numbers(rander)];
             std::string message;
 
-            if (category == "SPORTS") 
+            if (category == "SPORTS")
             {
                 message = "Producer " + std::to_string(id) + " " + category + " " + std::to_string(category_Counter.sport);
                 category_Counter.sport++;
-            } 
-            else if (category == "NEWS") 
+            }
+            else if (category == "NEWS")
             {
                 message = "Producer " + std::to_string(id) + " " + category + " " + std::to_string(category_Counter.news);
                 category_Counter.news++;
-            } 
+            }
             else if (category == "WEATHER")
             {
                 message = "Producer " + std::to_string(id) + " " + category + " " + std::to_string(category_Counter.weather);
@@ -91,7 +96,7 @@ public:
     }
 
 private:
-    struct Category_Counter 
+    struct Category_Counter
     {
         int sport = 0;
         int news = 0;
@@ -113,21 +118,23 @@ public:
         size_t producers_number = producer_buffers.size();
         size_t index = 0;
         while (doneCount < producers_number)
-         {
+        {
             std::string message;
-            if (producer_buffers[index]->tryRemove(message)) 
+            if (producer_buffers[index]->tryRemove(message))
             {
-                if (message == "DONE") 
+                if (message == "DONE")
                 {
                     ++doneCount;
-                } 
-                else 
+                }
+                else
                 {
                     if (message.find("SPORTS") != std::string::npos) {
                         sports_buffer.insert(message);
-                    } else if (message.find("NEWS") != std::string::npos) {
+                    }
+                    else if (message.find("NEWS") != std::string::npos) {
                         news_buffer.insert(message);
-                    } else if (message.find("WEATHER") != std::string::npos) {
+                    }
+                    else if (message.find("WEATHER") != std::string::npos) {
                         weather_buffer.insert(message);
                     }
                 }
@@ -152,11 +159,11 @@ public:
     CoEditor(BoundedBuffer& input_buffer, BoundedBuffer& output_buffer)
         : input_buffer(input_buffer), output_buffer(output_buffer) {}
     void operator()()
-     {
-        while (true) 
+    {
+        while (true)
         {
             std::string message = input_buffer.remove();
-            if (message == "DONE") 
+            if (message == "DONE")
             {
                 output_buffer.insert("DONE");
                 break;
@@ -164,25 +171,26 @@ public:
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             output_buffer.insert(message);
         }
-     }
+    }
 private:
     BoundedBuffer& input_buffer;
     BoundedBuffer& output_buffer;
 };
 
-class ScreenManager 
+class ScreenManager
 {
 public:
     ScreenManager(BoundedBuffer& buffer) : buffer(buffer), counter(0) {}
-    void operator()() 
+    void operator()()
     {
-        while (counter < 3) 
+        while (counter < 3)
         {
             std::string message = buffer.remove();
             if (message == "DONE")
             {
                 ++counter;
-            } else 
+            }
+            else
             {
                 std::cout << message << std::endl;
             }
@@ -195,4 +203,4 @@ private:
     size_t counter;
 };
 
-#endif 
+#endif
